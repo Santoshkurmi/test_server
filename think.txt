@@ -1,0 +1,28 @@
+
+
+For each build, we give them a token that is used to connect to the websocket.
+
+
+There is also gloabl token that is used to connect to the websocket
+to access all things logs of what project and which build is going on.
+
+
+1. Two project cannot start at the same time,
+2. Two build of a project cannot start at the same time,
+
+A one sender for each build.
+
+A one sender for whole project
+
+. let say we have a project called "test"
+and we are building something, 
+
+
+if one build all things compete, socket will be closed,
+sender should ne terminated for that bbuild,
+
+if whole project is complte,gloabl sender will be closed,
+
+This way the only two sender can be used for all the project.
+
+Also the socket session will be stored

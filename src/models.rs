@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{Mutex, broadcast, RwLock};
+use tokio::{ sync::{broadcast::{self, Sender}, Mutex, RwLock}};
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
 
@@ -12,12 +12,14 @@ pub struct AppState {
     pub config: Config,
     pub projects: Arc<RwLock<HashMap<String, ProjectState>>>,
     pub websocket_manager: Arc<WebSocketManager>,
+    pub project_sender: broadcast::Sender<ServerMessage>,
+    pub build_sender: broadcast::Sender<ServerMessage>,
 }
 
 #[derive(Clone)]
 pub struct ProjectState {
     pub build_queue: Arc<Mutex<Vec<BuildRequest>>>,
-    pub current_builds: Arc<Mutex<HashMap<String, BuildProcess>>>,
+    pub current_build: Arc<Mutex< Option<BuildProcess >>>,
     pub build_history: Arc<Mutex<Vec<BuildResult>>>,
 }
 
@@ -101,6 +103,12 @@ pub enum LogLevel {
     Success,
 }
 
+#[derive(Clone)]
+pub enum ServerMessage {
+    Data(String),
+    Shutdown,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BuildResult {
     pub id: String,
@@ -114,7 +122,7 @@ pub struct BuildResult {
 
 #[derive(Clone)]
 pub struct WebSocketManager {
-    pub connections: Arc<Mutex<HashMap<String, broadcast::Sender<String>>>>,
+    pub connections: Arc<Mutex<HashMap<String,Vec<broadcast::Sender<String>> >>>,
 }
 
 // API Request/Response models
@@ -135,7 +143,7 @@ pub struct BuildApiResponse {
 pub struct BuildStatusResponse {
     pub is_building: bool,
     pub queue_length: usize,
-    pub current_builds: Vec<BuildInfo>,
+    pub current_build: Option<BuildInfo>,
 }
 
 #[derive(Serialize)]
@@ -153,19 +161,21 @@ pub struct WebSocketQuery {
 }
 
 impl AppState {
-    pub async fn new(config: Config) -> Self {
+    pub async fn new(config: Config,project_sender: Sender<ServerMessage>,build_sender:Sender<ServerMessage>) -> Self {
         let mut projects = HashMap::new();
         
         for (name, _) in &config.projects {
             projects.insert(name.clone(), ProjectState {
                 build_queue: Arc::new(Mutex::new(Vec::new())),
-                current_builds: Arc::new(Mutex::new(HashMap::new())),
+                current_build: Arc::new(Mutex::new(None)),
                 build_history: Arc::new(Mutex::new(Vec::new())),
             });
         }
         
         Self {
             config,
+            project_sender,
+            build_sender,
             projects: Arc::new(RwLock::new(projects)),
             websocket_manager: Arc::new(WebSocketManager {
                 connections: Arc::new(Mutex::new(HashMap::new())),
@@ -175,22 +185,26 @@ impl AppState {
 }
 
 impl WebSocketManager {
-    pub async fn add_connection(&self, token: &str) -> broadcast::Receiver<String> {
-        let mut connections = self.connections.lock().await;
-        let (sender, receiver) = broadcast::channel(1000);
-        connections.insert(token.to_string(), sender);
-        receiver
-    }
+    // pub async fn add_connection(&self, token: &str,sender:Sender<String>) -> broadcast::Receiver<String> {
+    //     let mut connections = self.connections.lock().await;
+    //     let mut list = connections.get(token).unwrap_or(&Vec::new()).clone();
+    //     let new_receiver = sender.subscribe();
     
-    pub async fn send_message(&self, token: &str, message: &str) {
-        let connections = self.connections.lock().await;
-        if let Some(sender) = connections.get(token) {
-            let _ = sender.send(message.to_string());
-        }
-    }
+    //     list.push(sender);
+    //     connections.insert(token.to_string(), list);
+
+    //     new_receiver
+    // }
     
-    pub async fn remove_connection(&self, token: &str) {
-        let mut connections = self.connections.lock().await;
-        connections.remove(token);
-    }
+    // pub async fn send_message(&self, token: &str, message: &str) {
+    //     let connections = self.connections.lock().await;
+    //     if let Some(sender) = connections.get(token) {
+    //         let _ = sender.send(message.to_string());
+    //     }
+    // }
+    
+    // pub async fn remove_connection(&self, token: &str) {
+    //     let mut connections = self.connections.lock().await;
+    //     connections.remove(token);
+    // }
 }

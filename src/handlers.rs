@@ -10,6 +10,7 @@ use crate::models::{AppState, BuildApiRequest, BuildApiResponse, BuildStatusResp
 use crate::config::Config;
 use crate::build::BuildManager;
 use crate::utils;
+use crate::websocket::websocket_handler;
 
 #[get("/health")]
 pub async fn health_check() -> Result<HttpResponse> {
@@ -52,6 +53,9 @@ where
         // Is building endpoint
         let is_building_path = format!("{}{}", base_path, &project_config.api.is_building.endpoint);
         app = app.route(&is_building_path, web::get().to(is_building_handler));
+
+        let websocket_path = format!("{}{}", base_path, &project_config.api.socket.endpoint);
+        app = app.route(&websocket_path, web::get().to(websocket_handler));
         
         // Abort endpoint
         let abort_path = format!("{}{}", base_path, &project_config.api.abort.endpoint);
@@ -114,13 +118,13 @@ async fn build_handler(
     
     // Check if multi-build is allowed
     if !project_config.allow_multi_build {
-        let current_builds = project_state.current_builds.lock().await;
-        if !current_builds.is_empty() {
+        let current_builds = project_state.current_build.lock().await;
+        if current_builds.is_some() {
             return Ok(HttpResponse::Conflict().json(BuildApiResponse {
                 success: false,
                 message: "Build already in progress".to_string(),
                 data: Some(json!({
-                    "current_builds": current_builds.len()
+                    "current_builds": 0
                 })),
             }));
         }
@@ -184,20 +188,30 @@ async fn is_building_handler(
     let project_state = projects.get(&project_name).unwrap();
     
     let queue = project_state.build_queue.lock().await;
-    let current_builds = project_state.current_builds.lock().await;
+    let current_build = project_state.current_build.lock().await;
     
-    let build_infos: Vec<BuildInfo> = current_builds.values().map(|build| BuildInfo {
-        id: build.id.clone(),
-        status: build.status.clone(),
-        current_step: build.current_step,
-        total_steps: build.total_steps,
-        socket_token: build.socket_token.clone(),
-    }).collect();
-    
-    Ok(HttpResponse::Ok().json(BuildStatusResponse {
-        is_building: !current_builds.is_empty(),
+    if let Some(build) = current_build.as_ref() {
+       let build_info = BuildInfo {
+                id: build.id.clone(),
+                status: build.status.clone(),
+                current_step: build.current_step,
+                total_steps: build.total_steps,
+                socket_token: build.socket_token.clone(),
+            };
+
+       return  Ok(HttpResponse::Ok().json(BuildStatusResponse {
+        is_building: true,
         queue_length: queue.len(),
-        current_builds: build_infos,
+        current_build: Some(build_info),
+        }));
+
+    }//if 
+
+   
+    Ok(HttpResponse::Ok().json(BuildStatusResponse {
+        is_building: false,
+        queue_length: queue.len(),
+        current_build: None,
     }))
 }
 
@@ -251,7 +265,7 @@ async fn cleanup_handler(
     }))
 }
 
-fn extract_project_name(req: &HttpRequest, config: &Config) -> Result<String> {
+pub fn extract_project_name(req: &HttpRequest, config: &Config) -> Result<String> {
     let path = req.path();
     
     for (project_name, project_config) in &config.projects {

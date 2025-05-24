@@ -1,0 +1,114 @@
+# Root configuration of the system
+# For better readability, install a TOML syntax highlighting extension
+
+name = "Android App Builder"  # Name of the system which is not compulsary and wont be shown anywhere
+port = 8080   #Port to run the server on
+base_path = "/home/cat/"      # Leave empty to use absolute path of the projects
+log_path = "logs"   #Path to store logs, if project specific logs are not provided
+
+[ssl]
+enable_ssl = false
+certificate_path = "cert.pem" # This are absolute path of the certificate and key
+certificate_key_path = "key.pem" # This are absolute path of the certificate and key
+
+# Root authentication (used if project-specific auth is not provided)
+[auth]
+auth_type = "address"        # Options: "token", "address" or "both"
+address_type = "ip"          # Options: "ip", "hostname"
+allowed_addresses = ["127.0.0.1", "::1", "192.168.1.100"] # can be ip or hostname not both
+allowed_tokens = ["12345678901234567890123456789012"] # list of token if auth_type is token
+
+[projects]  #list of projects
+
+  [projects.school_app] # this is project school_app
+    allow_multi_build = true       # Builds run one at a time (not parallel) in sequence, if false, only one build run at a time
+    max_pending_build = 10         # Max queued builds (large value = unlimited-like)
+    base_endpoint_path="/api/school"  # base api endpoints of this project
+
+    [projects.school_app.api.build]  # build api endpoints which calling start the build process
+    endpoint = "/build"
+    method = "POST"
+    payload = ["$package_name", "git_token"] # $variable means the api will send this in json key, $ means the value of this is passed in environment variable while running build and without dollar means it will be stored in runtime of the build to later so something with it
+    return=[{value="package_name"},{value="%status%"},{name="token",value="%socket_token%"},{name="shell",value="$SHELL"}]
+    # return means what the api will return , key denote the json key where its value will be sent , value is the variable value to send, %variabel% are system level defiend in teh code, without its are normal variable passed from api, $variable are environment variable  
+    [[projects.school_app.api.build.file]]
+    name = "credentials"
+    path = "credential.json"
+    on_err_suc = "del"
+    #while calling /build, user can send string in teh json , and it wille saved as file while building, on build it will be deleted
+
+    # is_building api endpoint which checking if the build is running or not
+    [projects.school_app.api.is_building]
+    endpoint = "/is_building"
+    method = "GET"
+    payload = ["$package_name", "$$git_token"]
+
+# is_building api endpoint which checking if the build is running or not
+    [projects.school_app.api.socket]
+    endpoint = "/connect"
+    method = "GET"
+    payload = ["$package_name", "$$git_token"]
+
+
+    # abort api endpoint which abort the build process
+    [projects.school_app.api.abort]
+    endpoint = "/abort"
+    method = "POST"
+    payload = ["$package_name", "$$git_token"]
+    return=[]
+
+    # cleanup api endpoint which cleanup the build process, here in payload, ^^ can be used to send bash command, that will be executed and return back to the api
+    [projects.school_app.api.cleanup]
+    endpoint = "/cleanup"
+    method = "POST"
+    payload = ["$package_name", "$git_token","^cmd^","^remove^"]
+    return=[]
+
+
+
+    [projects.school_app.auth]
+    auth_type = "address"       # Options: "token", "address", "both"
+    address_type = "ip"         # Options: "ip", "hostname"
+    allowed_addresses = ["127.0.0.1", "::1", "192.168.1.100"]
+    allowed_tokens = ["12345678901234567890123456789012"]
+
+    [projects.school_app.build]
+    project_path = "/home/cat/school_build"
+
+    on_success = "http://127.0.0.1:8000/api/update/logs" #place empty if dont want to send anywhere
+    on_failure = "http://127.0.0.1:8000/api/update/logs"
+    on_success_payload = ["$package_name", "$status", "$token", "$shell"]
+    on_failure_payload = ["$package_name", "$status", "$token", "$shell"]
+
+    [[projects.school_app.build.run_on_success]]
+    command = "echo 1 && sleep 5"
+    title = "Running dummy logs"
+    send_to_sock = true
+
+    run_on_failure = []
+
+    [[projects.school_app.build.commands]]
+    command = "echo 1 && sleep 5"
+    on_error = "abort"
+    title = "Running dummy logs"
+    send_to_sock = true
+
+    [[projects.school_app.build.commands]]
+    command = "echo 2 && sleep 5"
+    title = "Running dummy logs"
+
+    [[projects.school_app.build.commands]]
+    command = "echo 3 && sleep 5"
+    title = "Running dummy logs"
+
+    [[projects.school_app.build.commands]]
+    command = "echo 3 && sleep 5"
+    title = "Running dummy logs"
+
+    [[projects.school_app.build.commands]]
+    command = "echo 4 && sleep 5"
+    title = "Running dummy logs"
+
+    [[projects.school_app.build.commands]]
+    command = "echo 5 && sleep 5"
+    title = "Running dummy logs"

@@ -30,8 +30,8 @@ impl BuildManager {
             drop(queue);
             
             // Check if we can start a new build
-            let mut current_builds = project_state.current_builds.lock().await;
-            if !project_config.allow_multi_build && !current_builds.is_empty() {
+            let mut current_builds = project_state.current_build.lock().await;
+            if !project_config.allow_multi_build && current_builds.is_some() {
                 // Put back in queue and wait
                 let mut queue = project_state.build_queue.lock().await;
                 queue.insert(0, build_request);
@@ -54,24 +54,25 @@ impl BuildManager {
                 handle: None,
             };
             
-            current_builds.insert(build_request.id.clone(), build_process);
+            *current_builds = Some(build_process);
+            // *current_builds.insert(build_request.id.clone(), build_process);
             drop(current_builds);
             
             // Start build execution
             let state_clone = state.clone();
             let project_name_clone = project_name.clone();
             let build_id = build_request.id.clone();
-            let build_id_clone = build_id.clone();
+            // let build_id_clone = build_id.clone();
             
             // let state_clone = Arc::clone(&state); // Assuming state is Arc<MyState>
-            let handle = tokio::spawn(async move {
-                Self::execute_build(state_clone, project_name_clone, build_id, &build_request).await;
-            });
+            // let handle = tokio::spawn(async move {
+            //     Self::execute_build(state_clone, project_name_clone, build_id, &build_request).await;
+            // });
             // Update handle
-            let mut current_builds = project_state.current_builds.lock().await;
-            if let Some(build) = current_builds.get_mut(&build_id_clone) {
-                build.handle = Some(handle);
-            }
+            // let mut current_build = project_state.current_build.lock().await;
+            // if let Some(build) = current_build.as_mut() {
+            //     build.handle = Some(handle);
+            // }
         }
     }
     
@@ -246,12 +247,12 @@ impl BuildManager {
         };
         
         // Add to build logs
-        let mut current_builds = project_state.current_builds.lock().await;
-        if let Some(build) = current_builds.get_mut(build_id) {
+        let mut current_build = project_state.current_build.lock().await;
+        if let Some(build) = current_build.as_mut() {
             build.logs.push(log.clone());
             build.current_step = step;
         }
-        drop(current_builds);
+        drop(current_build);
         
         // Send to WebSocket
         let ws_message = json!({
@@ -263,7 +264,7 @@ impl BuildManager {
             "timestamp": log.timestamp
         });
         
-        state.websocket_manager.send_message(socket_token, &ws_message.to_string()).await;
+        // state.websocket_manager.send_message(socket_token, &ws_message.to_string()).await;
     }
     
     async fn finalize_build(
@@ -277,8 +278,8 @@ impl BuildManager {
         let completed_at = Utc::now();
         
         // Remove from current builds and add to history
-        let mut current_builds = project_state.current_builds.lock().await;
-        if let Some(build) = current_builds.remove(build_id) {
+        let mut current_build = project_state.current_build.lock().await;
+        if let Some(build) = current_build.take() {
             let duration = (completed_at - build.started_at).num_seconds() as u64;
             
             let result = BuildResult {

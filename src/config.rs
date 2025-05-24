@@ -44,6 +44,7 @@ pub struct ApiConfig {
     pub is_building: EndpointConfig,
     pub abort: EndpointConfig,
     pub cleanup: EndpointConfig,
+    pub socket: EndpointConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
