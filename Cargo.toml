@@ -1,0 +1,26 @@
+[package]
+name = "test_server"
+version = "0.1.0"
+edition = "2024"
+
+
+[dependencies]
+actix-web = { version="4.4", features=["openssl"] }
+actix-ws = "0.2"
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+uuid = { version = "1.0", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+reqwest = { version = "0.11", features = ["json"] }
+openssl = "0.10"
+futures-util = "0.3"
+tokio-stream = "0.1"
+log = "0.4"
+env_logger = "0.10"
+anyhow = "1.0"
+regex = "1.0"
+base64 = "0.21"
+rand = "0.8"
+dirs = "5.0"
