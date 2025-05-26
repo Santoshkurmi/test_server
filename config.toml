@@ -24,24 +24,20 @@ allowed_tokens = ["12345678901234567890123456789012"] # list of token if auth_ty
     allow_multi_build = true       # Builds run one at a time (not parallel) in sequence, if false, only one build run at a time
     max_pending_build = 10         # Max queued builds (large value = unlimited-like)
     base_endpoint_path="/api/school"  # base api endpoints of this project
+    next_build_delay = 60 #in seconds to wait for next build
 
     [projects.school_app.api.build]  # build api endpoints which calling start the build process
     endpoint = "/build"
-    method = "POST"
-    payload = ["$package_name", "git_token"] # $variable means the api will send this in json key, $ means the value of this is passed in environment variable while running build and without dollar means it will be stored in runtime of the build to later so something with it
-    return=[{value="package_name"},{value="%status%"},{name="token",value="%socket_token%"},{name="shell",value="$SHELL"}]
-    # return means what the api will return , key denote the json key where its value will be sent , value is the variable value to send, %variabel% are system level defiend in teh code, without its are normal variable passed from api, $variable are environment variable  
-    [[projects.school_app.api.build.file]]
-    name = "credentials"
-    path = "credential.json"
-    on_err_suc = "del"
+    method = "POST" # This cannot be changed method type, it just to know the type here
+    payload = ["$package_name" ,"git_token"] # $variable means the api will send this in json key, $ means the value of this is passed in environment variable while running build and without dollar means it will be stored in runtime of the build to later so something with it
+    # return=[{value="package_name"},{value="%status%"},{name="token",value="%socket_token%"},{name="shell",value="$SHELL"}]
     #while calling /build, user can send string in teh json , and it wille saved as file while building, on build it will be deleted
 
     # is_building api endpoint which checking if the build is running or not
     [projects.school_app.api.is_building]
     endpoint = "/is_building"
     method = "GET"
-    payload = ["$package_name", "$$git_token"]
+    payload = ["$package_name", "$git_token"]
 
 # is_building api endpoint which checking if the build is running or not
     [projects.school_app.api.socket]
@@ -53,7 +49,7 @@ allowed_tokens = ["12345678901234567890123456789012"] # list of token if auth_ty
     # abort api endpoint which abort the build process
     [projects.school_app.api.abort]
     endpoint = "/abort"
-    method = "POST"
+    method = "POST" #in each request you need to pass unique_id
     payload = ["$package_name", "$$git_token"]
     return=[]
 
@@ -74,6 +70,7 @@ allowed_tokens = ["12345678901234567890123456789012"] # list of token if auth_ty
 
     [projects.school_app.build]
     project_path = "/home/cat/school_build"
+    unique_build_key = "package_name" # add one uniqyue build key to know the build uniqueness
 
     on_success = "http://127.0.0.1:8000/api/update/logs" #place empty if dont want to send anywhere
     on_failure = "http://127.0.0.1:8000/api/update/logs"

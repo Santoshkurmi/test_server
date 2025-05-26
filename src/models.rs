@@ -1,9 +1,12 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::{ sync::{broadcast::{self, Sender}, Mutex, RwLock}};
+use tokio::sync::{
+    Mutex, RwLock,
+    broadcast::{self, Sender},
+};
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
 use crate::config::Config;
 
@@ -23,7 +26,7 @@ pub struct AppState {
 #[derive(Clone)]
 pub struct ProjectState {
     pub build_queue: Arc<Mutex<Vec<BuildRequest>>>,
-    pub current_build: Arc<Mutex< Option<BuildProcess >>>,
+    pub current_build: Arc<Mutex<Option<BuildProcess>>>,
     pub build_history: Arc<Mutex<Vec<BuildResult>>>,
 }
 
@@ -31,6 +34,7 @@ pub struct ProjectState {
 pub struct BuildRequest {
     pub id: String,
     pub project_name: String,
+    pub unique_id: String,
     pub payload: HashMap<String, serde_json::Value>,
     pub files: HashMap<String, String>,
     pub created_at: DateTime<Utc>,
@@ -50,7 +54,6 @@ pub struct BuildProcess {
     pub handle: Option<tokio::task::JoinHandle<()>>,
 }
 
-
 impl Clone for BuildProcess {
     fn clone(&self) -> Self {
         Self {
@@ -66,7 +69,6 @@ impl Clone for BuildProcess {
         }
     }
 }
-
 
 // #[derive(Clone)]
 // pub struct BuildProcess {
@@ -132,11 +134,11 @@ pub struct BuildResult {
 
 #[derive(Clone)]
 pub struct WebSocketManager {
-    pub connections: Arc<Mutex<HashMap<String,Vec<broadcast::Sender<String>> >>>,
+    pub connections: Arc<Mutex<HashMap<String, Vec<broadcast::Sender<String>>>>>,
 }
 
 // API Request/Response models
-#[derive(Deserialize,Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct BuildApiRequest {
     #[serde(flatten)]
     pub payload: HashMap<String, serde_json::Value>,
@@ -166,26 +168,34 @@ pub struct BuildInfo {
     pub socket_token: String,
 }
 
-#[derive(Deserialize,Serialize,Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct WebSocketQuery {
     pub token: String,
 }
 
 impl AppState {
-    pub async fn new(config: Config,project_sender: Sender<ServerMessage>,build_sender:Sender<ServerMessage>,queue_sender:Sender<BuildNextMessage>) -> Self {
+    pub async fn new(
+        config: Config,
+        project_sender: Sender<ServerMessage>,
+        build_sender: Sender<ServerMessage>,
+        queue_sender: Sender<BuildNextMessage>,
+    ) -> Self {
         let mut projects = HashMap::new();
-        
+
         for (name, _) in &config.projects {
-            projects.insert(name.clone(), ProjectState {
-                build_queue: Arc::new(Mutex::new(Vec::new())),
-                current_build: Arc::new(Mutex::new(None)),
-                build_history: Arc::new(Mutex::new(Vec::new())),
-            });
+            projects.insert(
+                name.clone(),
+                ProjectState {
+                    build_queue: Arc::new(Mutex::new(Vec::new())),
+                    current_build: Arc::new(Mutex::new(None)),
+                    build_history: Arc::new(Mutex::new(Vec::new())),
+                },
+            );
         }
-        
+
         Self {
             config,
-            is_terminated:Arc::new(Mutex::new(false)),
+            is_terminated: Arc::new(Mutex::new(false)),
             running_command_child: Arc::new(Mutex::new(None)),
             project_sender,
             build_sender,
@@ -205,22 +215,23 @@ impl WebSocketManager {
     //     let mut connections = self.connections.lock().await;
     //     let mut list = connections.get(token).unwrap_or(&Vec::new()).clone();
     //     let new_receiver = sender.subscribe();
-    
+
     //     list.push(sender);
     //     connections.insert(token.to_string(), list);
 
     //     new_receiver
     // }
-    
+
     // pub async fn send_message(&self, token: &str, message: &str) {
     //     let connections = self.connections.lock().await;
     //     if let Some(sender) = connections.get(token) {
     //         let _ = sender.send(message.to_string());
     //     }
     // }
-    
+
     // pub async fn remove_connection(&self, token: &str) {
     //     let mut connections = self.connections.lock().await;
     //     connections.remove(token);
     // }
 }
+

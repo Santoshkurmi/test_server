@@ -1,6 +1,6 @@
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use anyhow::Result;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
@@ -22,7 +22,7 @@ pub struct SslConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AuthConfig {
-    pub auth_type: String, // "token", "address", "both"
+    pub auth_type: String,    // "token", "address", "both"
     pub address_type: String, // "ip", "hostname"
     pub allowed_addresses: Vec<String>,
     pub allowed_tokens: Vec<String>,
@@ -57,7 +57,7 @@ pub struct EndpointConfig {
     #[serde(default)]
     pub file: Vec<FileConfig>,
 }
- 
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ReturnField {
     pub name: Option<String>,
@@ -74,6 +74,7 @@ pub struct FileConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BuildConfig {
     pub project_path: String,
+    pub unique_build_key: String,
     pub on_success: String,
     pub on_failure: String,
     pub on_success_payload: Vec<String>,
@@ -102,3 +103,4 @@ impl Config {
         Ok(config)
     }
 }
+
