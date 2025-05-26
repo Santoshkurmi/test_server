@@ -30,56 +30,56 @@ where
         Error = actix_web::Error,
         InitError = (),
     >,{
-    for (project_name, project_config) in &config.projects {
+    for (_project_name, project_config) in &config.projects {
         let base_path = &project_config.base_endpoint_path;
-        
-        // Build endpoint
-        let build_path = format!("{}{}", base_path, &project_config.api.build.endpoint);
-        let build_method = &project_config.api.build.method;
-        
-        // Register build endpoint based on method
-        match build_method.to_uppercase().as_str() {
-            "POST" => {
-                app = app.route(&build_path, web::post().to(build_handler));
-            }
-            "GET" => {
-                app = app.route(&build_path, web::get().to(build_handler));
-            }
-            _ => {
-                log::warn!("Unsupported HTTP method: {} for project: {}", build_method, project_name);
-            }
-        }
-        
-        // Is building endpoint
-        let is_building_path = format!("{}{}", base_path, &project_config.api.is_building.endpoint);
-        app = app.route(&is_building_path, web::get().to(is_building_handler));
 
-        let websocket_path = format!("{}{}", base_path, &project_config.api.socket.endpoint);
-        app = app.route(&websocket_path, web::get().to(websocket_handler));
+        if !&project_config.api.build.endpoint.trim().is_empty() {
+
+            let build_path = format!("{}{}", base_path, &project_config.api.build.endpoint);
+            app = app.route(&build_path, web::post().to(build_handler));
+
+        }//if build
+
         
-        // Abort endpoint
-        let abort_path = format!("{}{}", base_path, &project_config.api.abort.endpoint);
-        app = app.route(&abort_path, web::post().to(abort_handler));
-        
-        // Cleanup endpoint
-        let cleanup_path = format!("{}{}", base_path, &project_config.api.cleanup.endpoint);
-        app = app.route(&cleanup_path, web::post().to(cleanup_handler));
-    }
+        if !&project_config.api.is_building.endpoint.trim().is_empty() {
+            let is_building_path = format!("{}{}", base_path, &project_config.api.is_building.endpoint);
+            app = app.route(&is_building_path, web::get().to(is_building_handler));
+        }
+      
+        if !&project_config.api.socket.endpoint.trim().is_empty() {
+            let websocket_path = format!("{}{}", base_path, &project_config.api.socket.endpoint);
+            app = app.route(&websocket_path, web::get().to(websocket_handler));
+        }
+      
+        if !&project_config.api.abort.endpoint.trim().is_empty() {
+            let abort_path = format!("{}{}", base_path, &project_config.api.abort.endpoint);
+            app = app.route(&abort_path, web::post().to(abort_handler));
+        }
+       
+        if !&project_config.api.cleanup.endpoint.trim().is_empty() {
+            let cleanup_path = format!("{}{}", base_path, &project_config.api.cleanup.endpoint);
+            app = app.route(&cleanup_path, web::post().to(cleanup_handler));
+        }
+    }//loop
     
     app
 }
 
+
 async fn build_handler(
     req: HttpRequest,
     payload: web::Json<BuildApiRequest>,
-    state: web::Data<AppState>,
+    state: web::Data <AppState>,
 ) -> Result<HttpResponse> {
+
+   
     let project_name = extract_project_name(&req, &state.config)?; 
-    
+   
     if !is_authorized(&req, &state, Some(&project_name)).await {
         return Ok(HttpResponse::Unauthorized().json(BuildApiResponse {
             success: false,
             message: "Unauthorized".to_string(),
+            state:"unauthorized".to_string(),
             data: None,
         }));
     }
@@ -94,10 +94,67 @@ async fn build_handler(
                 success: false,
                 message: format!("Missing required field: {}", field_name),
                 data: None,
+                state:"missing".to_string()
             }));
         }
     }
+
+
+    // Add to queue
+    let projects = state.projects.read().await;
+    let project_state = projects.get(&project_name).unwrap();
     
+    // Check if multi-build is allowed
+    if !project_config.allow_multi_build {
+        let current_builds = project_state.current_build.lock().await;
+        if let Some(build) =  current_builds.as_ref() {
+            return Ok(HttpResponse::Conflict().json(BuildApiResponse {
+                success: false,
+                message: "Build already in progress".to_string(),
+                data: Some(json!({
+                    "current_builds": 0,
+                    "socket_token": build.socket_token.clone()
+                })),
+                state:"already_running".to_string()
+            }));
+        }
+    }
+    else{
+
+        let current_builds = project_state.current_build.lock().await;
+        if let Some(build) = current_builds.as_ref() {
+            if build.project_name != project_name {
+                return Ok(HttpResponse::Conflict().json(BuildApiResponse {
+                    success: false,
+                    message: "Build already in progress for other project".to_string(),
+                    data: None,
+                    state:"already_running".to_string()
+                }));
+            }
+        }//if
+
+
+         // Check queue limit
+    let  queue = project_state.build_queue.lock().await;
+    if queue.len() >= project_config.max_pending_build as usize {
+        return Ok(HttpResponse::TooManyRequests().json(BuildApiResponse {
+            success: false,
+            message: "Build queue is full".to_string(),
+            state:"full".to_string(),
+            data: Some(json!({
+                "queue_length": queue.len(),
+                "max_queue": project_config.max_pending_build
+            })),
+        }));
+    }
+    
+    
+    }//if multi build available
+    
+    
+
+    
+
     // Generate build ID and socket token
     let build_id = Uuid::new_v4().to_string();
     let socket_token = utils::generate_token(32);
@@ -111,43 +168,36 @@ async fn build_handler(
         created_at: Utc::now(),
         socket_token: socket_token.clone(),
     };
-    
-    // Add to queue
-    let projects = state.projects.read().await;
-    let project_state = projects.get(&project_name).unwrap();
-    
-    // Check if multi-build is allowed
-    if !project_config.allow_multi_build {
-        let current_builds = project_state.current_build.lock().await;
-        if current_builds.is_some() {
-            return Ok(HttpResponse::Conflict().json(BuildApiResponse {
-                success: false,
-                message: "Build already in progress".to_string(),
-                data: Some(json!({
-                    "current_builds": 0
-                })),
-            }));
-        }
-    }
-    
-    // Check queue limit
+
     let mut queue = project_state.build_queue.lock().await;
-    if queue.len() >= project_config.max_pending_build as usize {
-        return Ok(HttpResponse::TooManyRequests().json(BuildApiResponse {
-            success: false,
-            message: "Build queue is full".to_string(),
-            data: Some(json!({
-                "queue_length": queue.len(),
-                "max_queue": project_config.max_pending_build
-            })),
-        }));
-    }
-    
+
     queue.push(build_request);
     drop(queue);
     
+    
+   
+    let state_clone = state.clone();
+
+      {
+            let mut is_queue_running = state.is_queue_running.write().await;
+            if *is_queue_running {
+                println!("Queue is already running,added only");
+            }
+            else{
+                *is_queue_running = true;
+                tokio::spawn(async move {
+                        BuildManager::process_queue(state_clone, project_name.clone()).await;
+                    });
+            }
+                drop(is_queue_running);
+
+        }
     // Start build manager if not running
-    BuildManager::process_queue(state.clone(), project_name.clone()).await;
+  
+
+    // handle.abort();
+
+
     
     // Prepare response
     let mut response_data = json!({
@@ -165,6 +215,7 @@ async fn build_handler(
     
     Ok(HttpResponse::Ok().json(BuildApiResponse {
         success: true,
+        state:"building".to_string(),
         message: "Build queued successfully".to_string(),
         data: Some(response_data),
     }))
@@ -181,6 +232,7 @@ async fn is_building_handler(
             success: false,
             message: "Unauthorized".to_string(),
             data: None,
+            state:"unauthorized".to_string()
         }));
     }
     
@@ -227,16 +279,29 @@ async fn abort_handler(
             success: false,
             message: "Unauthorized".to_string(),
             data: None,
+            state:"unauthorized".to_string()
+
         }));
     }
     
     // TODO: Implement build abortion logic
-    BuildManager::abort_build(state.clone(), project_name, payload.payload.clone()).await;
-    
+    // BuildManager::abort_build(state.clone(), project_name, payload.payload.clone()).await;
+
+    let mut child = state.running_command_child.lock().await.take();
+    if let Some(child) = child.as_mut() {
+        child.kill().await.unwrap();
+
+        let mut is_terminated = state.is_terminated.lock().await;
+        *is_terminated = true;
+
+    }
+
     Ok(HttpResponse::Ok().json(BuildApiResponse {
         success: true,
         message: "Build aborted".to_string(),
         data: None,
+        state:"aborted".to_string()
+
     }))
 }
 
@@ -252,6 +317,7 @@ async fn cleanup_handler(
             success: false,
             message: "Unauthorized".to_string(),
             data: None,
+            state:"unauthorized".to_string()
         }));
     }
     
@@ -262,6 +328,7 @@ async fn cleanup_handler(
         success: true,
         message: "Cleanup completed".to_string(),
         data: None,
+        state:"success".to_string()
     }))
 }
 

@@ -22,7 +22,6 @@ pub async fn websocket_handler(
     let project_state = projects.get(&project_name).unwrap();
 
     let current_build = project_state.current_build.lock().await;
-
     if let Some(build) = current_build.as_ref() {
         if build.socket_token == *token {
             token_valid = true;
@@ -33,7 +32,6 @@ pub async fn websocket_handler(
             "error": "No any build in progress"
         })));
     }
-
 
     if !token_valid {
         return Ok(HttpResponse::BadRequest().json(json!({
@@ -53,6 +51,8 @@ pub async fn websocket_handler(
         // for line in buf.iter() {
         let _ = session.text(json_array).await;
     }
+
+    drop(current_build);
 
     // Handle incoming messages
     let token_clone = token.clone();

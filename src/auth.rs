@@ -7,7 +7,7 @@ use crate::models::AppState;
 
 pub async fn is_authorized(
     req: &HttpRequest,
-    state:  &web::Data<AppState>,
+    state:  &Arc<AppState>,
     project_name: Option<&str>,
 ) -> bool {
     let auth_config = if let Some(project) = project_name {

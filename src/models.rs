@@ -14,6 +14,10 @@ pub struct AppState {
     pub websocket_manager: Arc<WebSocketManager>,
     pub project_sender: broadcast::Sender<ServerMessage>,
     pub build_sender: broadcast::Sender<ServerMessage>,
+    pub queue_sender: broadcast::Sender<BuildNextMessage>,
+    pub is_queue_running: Arc<RwLock<bool>>,
+    pub running_command_child: Arc<Mutex<Option<tokio::process::Child>>>,
+    pub is_terminated: Arc<Mutex<bool>>,
 }
 
 #[derive(Clone)]
@@ -109,6 +113,12 @@ pub enum ServerMessage {
     Shutdown,
 }
 
+#[derive(Clone)]
+pub enum BuildNextMessage {
+    Project(String),
+    Shutdown,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BuildResult {
     pub id: String,
@@ -126,7 +136,7 @@ pub struct WebSocketManager {
 }
 
 // API Request/Response models
-#[derive(Deserialize)]
+#[derive(Deserialize,Serialize)]
 pub struct BuildApiRequest {
     #[serde(flatten)]
     pub payload: HashMap<String, serde_json::Value>,
@@ -136,6 +146,7 @@ pub struct BuildApiRequest {
 pub struct BuildApiResponse {
     pub success: bool,
     pub message: String,
+    pub state: String,
     pub data: Option<serde_json::Value>,
 }
 
@@ -155,13 +166,13 @@ pub struct BuildInfo {
     pub socket_token: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize,Serialize,Clone)]
 pub struct WebSocketQuery {
     pub token: String,
 }
 
 impl AppState {
-    pub async fn new(config: Config,project_sender: Sender<ServerMessage>,build_sender:Sender<ServerMessage>) -> Self {
+    pub async fn new(config: Config,project_sender: Sender<ServerMessage>,build_sender:Sender<ServerMessage>,queue_sender:Sender<BuildNextMessage>) -> Self {
         let mut projects = HashMap::new();
         
         for (name, _) in &config.projects {
@@ -174,8 +185,13 @@ impl AppState {
         
         Self {
             config,
+            is_terminated:Arc::new(Mutex::new(false)),
+            running_command_child: Arc::new(Mutex::new(None)),
             project_sender,
             build_sender,
+            queue_sender,
+            is_queue_running: Arc::new(RwLock::new(false)),
+
             projects: Arc::new(RwLock::new(projects)),
             websocket_manager: Arc::new(WebSocketManager {
                 connections: Arc::new(Mutex::new(HashMap::new())),

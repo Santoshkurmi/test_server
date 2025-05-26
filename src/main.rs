@@ -1,4 +1,5 @@
 use actix_web::{web, App, HttpServer, middleware::Logger};
+use build::BuildManager;
 use std::{env, sync::Arc};
 use tokio::sync::{broadcast, Mutex};
 use openssl::ssl::{SslAcceptor, SslMethod, SslFiletype};
@@ -12,7 +13,7 @@ mod websocket;
 mod utils;
 
 use config::Config;
-use models::{AppState, ServerMessage};
+use models::{AppState, BuildNextMessage, ServerMessage};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -28,13 +29,28 @@ async fn main() -> std::io::Result<()> {
 
     let (project_sender,_b) = broadcast::channel::<ServerMessage>(100);
     let (build_sender,_a) = broadcast::channel::<ServerMessage>(100);
+    let (queue_sender,_queue_receiver) = broadcast::channel::<BuildNextMessage>(100);
  
+
+
+
     
     // Create shared application state
-    let app_state = AppState::new(config,project_sender,build_sender).await;
+    let app_state = AppState::new(config,project_sender,build_sender,queue_sender).await;
 
     let app_data = web::Data::new(app_state);
+
+    // let arc = Arc::new(app_data.clone());
    
+
+    // let app_data_clone = app_data.clone();
+
+ 
+
+    
+    
+
+
     log::info!("Starting server on port {}", port);
     println!("Starting server on port {}", port);
     let server = HttpServer::new(move || {
@@ -42,7 +58,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(app_data.clone()) //need to see here
             // .wrap(Logger::default())
             .service(handlers::health_check);
-            // .service(websocket::websocket_handler);
+            // .service(build_handler);
             
         // Dynamically register project routes
         app = handlers::register_project_routes(app, &app_data.config);
