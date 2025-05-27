@@ -114,6 +114,12 @@ async fn build_handler(
     let projects = state.projects.read().await;
     let project_state = projects.get(&project_name).unwrap();
 
+    let unique_id = payload
+        .payload
+        .get(&project_config.build.unique_build_key)
+        .unwrap()
+        .as_str()
+        .unwrap();
     // Check if multi-build is allowed
     if !project_config.allow_multi_build {
         let current_builds = project_state.current_build.lock().await;
@@ -157,7 +163,6 @@ async fn build_handler(
         drop(queue);
 
         let queues = project_state.build_queue.lock().await;
-        let unique_id = &project_config.build.unique_build_key;
 
         for i in 0..queues.len() {
             let build_req = queues.get(i);
@@ -173,19 +178,19 @@ async fn build_handler(
             }
         }
         drop(queues);
-    let current_build = project_state.current_build.lock().await
-        if current_build.is_some(){
-            let build = current_build.unwrap();
-            if &build.socket_token. == unique_id {
+        drop(current_builds);
+        let current_build = project_state.current_build.lock().await;
+        if let Some(cur) = current_build.as_ref() {
+            if cur.unique_id == unique_id {
                 return Ok(HttpResponse::TooManyRequests().json(BuildApiResponse {
                     success: false,
                     message: "This build is already in pending".to_string(),
                     state: "already".to_string(),
-                    data: Some(json!({"socket_token":build.socket_token})),
+                    data: Some(json!({"socket_token":cur.socket_token})),
                 }));
             }
         }
-
+        drop(current_build);
     } //if multi build available
 
     // Generate build ID and socket token
@@ -199,7 +204,7 @@ async fn build_handler(
         payload: payload.payload.clone(),
         files: HashMap::new(), // TODO: Handle file uploads
         created_at: Utc::now(),
-        unique_id: project_config.build.unique_build_key.clone(),
+        unique_id: unique_id.to_string(),
         socket_token: socket_token.clone(),
     };
 
@@ -328,20 +333,67 @@ async fn abort_handler(
 
     // TODO: Implement build abortion logic
     // BuildManager::abort_build(state.clone(), project_name, payload.payload.clone()).await;
+    //
+    // this is to abort only particular
+    //
 
-    let mut child = state.running_command_child.lock().await.take();
-    if let Some(child) = child.as_mut() {
-        child.kill().await.unwrap();
+    let project_config = state.config.projects.get(&project_name).unwrap();
 
-        let mut is_terminated = state.is_terminated.lock().await;
-        *is_terminated = true;
+    let project_lock = state.projects.write().await;
+    let project_state = project_lock.get(&project_name);
+    if let Some(queues_main_lock) = project_state {
+        let mut queues = queues_main_lock.build_queue.lock().await;
+
+        // Find the index of the matching build
+        if let Some(pos) = queues.iter().position(|build| {
+            &build.unique_id
+                == payload
+                    .payload
+                    .get(&project_config.build.unique_build_key)
+                    .unwrap()
+        }) {
+            let build = queues.remove(pos); // Now safely remove it
+
+            return Ok(HttpResponse::TooManyRequests().json(BuildApiResponse {
+                success: true,
+                message: "Project is terminated".to_string(),
+                state: "aborted".to_string(),
+                data: None,
+            }));
+        }
+
+        let current_build = queues_main_lock.current_build.lock().await;
+        if let Some(cur) = current_build.as_ref() {
+            if cur.unique_id
+                == *payload
+                    .payload
+                    .get(&project_config.build.unique_build_key)
+                    .unwrap()
+            {
+                let mut child = state.running_command_child.lock().await.take();
+                if let Some(child) = child.as_mut() {
+                    child.kill().await.unwrap();
+
+                    let mut is_terminated = state.is_terminated.lock().await;
+                    *is_terminated = true;
+                }
+                return Ok(HttpResponse::TooManyRequests().json(BuildApiResponse {
+                    success: true,
+                    message: "This is being running already..Killing".to_string(),
+                    state: "aborted".to_string(),
+                    data: None,
+                }));
+            }
+        }
+        drop(current_build);
     }
+    drop(project_lock);
 
     Ok(HttpResponse::Ok().json(BuildApiResponse {
-        success: true,
-        message: "Build aborted".to_string(),
+        success: false,
+        message: "No any build found".to_string(),
         data: None,
-        state: "aborted".to_string(),
+        state: "not_found".to_string(),
     }))
 }
 

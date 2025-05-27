@@ -45,6 +45,7 @@ pub struct BuildRequest {
 pub struct BuildProcess {
     pub id: String,
     pub project_name: String,
+    pub unique_id: String,
     pub status: BuildStatus,
     pub current_step: usize,
     pub total_steps: usize,
@@ -57,6 +58,7 @@ pub struct BuildProcess {
 impl Clone for BuildProcess {
     fn clone(&self) -> Self {
         Self {
+            unique_id: self.unique_id.clone(),
             id: self.id.clone(),
             project_name: self.project_name.clone(),
             status: self.status.clone(),
@@ -234,4 +236,3 @@ impl WebSocketManager {
     //     connections.remove(token);
     // }
 }
-

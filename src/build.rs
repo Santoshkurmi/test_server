@@ -56,6 +56,7 @@ impl BuildManager {
             // Create build process
             let build_process = BuildProcess {
                 id: build_request.id.clone(),
+                unique_id: build_request.unique_id.clone(),
                 project_name: project_name.clone(),
                 status: BuildStatus::Running,
                 current_step: 0,
@@ -150,9 +151,11 @@ impl BuildManager {
             .await;
 
             {
-                let is_terminated = state.is_terminated.lock().await;
+                let mut is_terminated = state.is_terminated.lock().await;
                 if *is_terminated {
                     println!("Build is terminated");
+                    //send logs in here then again start the next project
+                    *is_terminated = false;
                     return;
                 }
             }
@@ -249,6 +252,14 @@ impl BuildManager {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| format!("Failed to spawn command: {}", e))?;
+        {
+            let is_terminated = state.is_terminated.lock().await;
+            if *is_terminated {
+                println!("Build is terminated");
+                child.kill().await.unwrap();
+                return Err("Child is killed".to_string());
+            }
+        }
 
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
@@ -428,4 +439,3 @@ impl BuildManager {
         log::info!("Cleaning up project: {}", project_name);
     }
 }
-
