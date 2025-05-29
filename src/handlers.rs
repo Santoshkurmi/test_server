@@ -224,6 +224,15 @@ async fn build_handler(
             tokio::spawn(async move {
                 BuildManager::process_queue(state_clone, project_name.clone()).await;
             });
+            return Ok(HttpResponse::Ok().json(BuildApiResponse {
+                success: true,
+                state: "building".to_string(),
+                message: "Build queued successfully".to_string(),
+                data: Some(json!({
+                    "socket_token":socket_token,
+                    "build_id":build_id
+                })),
+            }));
         }
         drop(is_queue_running);
     }
@@ -231,29 +240,21 @@ async fn build_handler(
 
     // handle.abort();
 
-    // Prepare response
-    let mut response_data = json!({
-        "success":true,
-        "message":"Build is in pending state",
-        "build_id": build_id,
-        "data": json!({
-            "socket_token":socket_token,
-            "build_id":build_id,
-        }),
-        "state": "queued"
-    });
     // Add custom return fields
-    for return_field in &project_config.api.build.return_fields {
-        let value = utils::resolve_variable(&return_field.value, &payload.payload, &socket_token);
-        let key = return_field.name.as_ref().unwrap_or(&return_field.value);
-        response_data[key] = json!(value);
-    }
+    // for return_field in &project_config.api.build.return_fields {
+    //     let value = utils::resolve_variable(&return_field.value, &payload.payload, &socket_token);
+    //     let key = return_field.name.as_ref().unwrap_or(&return_field.value);
+    //     response_data[key] = json!(value);
+    // }
 
     Ok(HttpResponse::Ok().json(BuildApiResponse {
         success: true,
-        state: "building".to_string(),
+        state: "queued".to_string(),
         message: "Build queued successfully".to_string(),
-        data: Some(response_data),
+        data: Some(json!({
+            "socket_token":socket_token,
+            "build_id":build_id,
+        })),
     }))
 }
 
@@ -331,12 +332,6 @@ async fn abort_handler(
         }));
     }
 
-    // TODO: Implement build abortion logic
-    // BuildManager::abort_build(state.clone(), project_name, payload.payload.clone()).await;
-    //
-    // this is to abort only particular
-    //
-
     let project_config = state.config.projects.get(&project_name).unwrap();
 
     let project_lock = state.projects.write().await;
@@ -389,11 +384,13 @@ async fn abort_handler(
     }
     drop(project_lock);
 
+    //just send aborted even if its not bulding, this is neccessary for frontend if this server
+    //cant sync the state and the frontend expecting it as pending or building forever.
     Ok(HttpResponse::Ok().json(BuildApiResponse {
         success: false,
         message: "No any build found".to_string(),
         data: None,
-        state: "not_found".to_string(),
+        state: "aborted".to_string(),
     }))
 }
 

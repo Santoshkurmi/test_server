@@ -12,7 +12,7 @@ use crate::models::{
     AppState, BuildLog, BuildNextMessage, BuildProcess, BuildResult, BuildStatus, LogLevel,
     ServerMessage,
 };
-use crate::utils;
+use crate::utils::{self, read_output_lines};
 
 pub struct BuildManager;
 
@@ -21,6 +21,8 @@ impl BuildManager {
         let projects = state.projects.read().await;
         let project_state = projects.get(&project_name).unwrap().clone();
         drop(projects);
+
+        let mut is_first_run = true;
 
         let project_config = state.config.projects.get(&project_name).unwrap();
 
@@ -88,11 +90,14 @@ impl BuildManager {
                     project_name_clone,
                     build_id,
                     build_request_for_spawn,
+                    is_first_run,
                 )
                 .await;
             })
             .await
             .unwrap();
+
+            is_first_run = false;
 
             let mut current_builds = project_state.current_build.lock().await;
             *current_builds = None;
@@ -112,6 +117,7 @@ impl BuildManager {
         project_name: String,
         build_id: String,
         build_request: crate::models::BuildRequest,
+        is_first_build: bool,
     ) {
         let project_config = state.config.projects.get(&project_name).unwrap().clone();
         let projects = state.projects.read().await;
@@ -120,35 +126,22 @@ impl BuildManager {
         let mut success = true;
         let mut step = 1;
 
-        // Send initial log
-        Self::send_log(
-            &state,
-            &build_request.socket_token,
-            &project_state,
-            &build_id,
-            0,
-            LogLevel::Info,
-            "Build started".to_string(),
-            None,
-        )
-        .await;
-
         // Execute commands
         for command_config in &project_config.build.commands {
             let resolved_command =
                 utils::resolve_command(&command_config.command, &build_request.payload);
 
-            Self::send_log(
-                &state,
-                &build_request.socket_token,
-                &project_state,
-                &build_id,
-                step,
-                LogLevel::Info,
-                format!("Executing: {}", command_config.title),
-                Some(resolved_command.clone()),
-            )
-            .await;
+            //Self::send_log(
+            //    &state,
+            //    &build_request.socket_token,
+            //    &project_state,
+            //    &build_id,
+            //    step,
+            //    LogLevel::Info,
+            //    format!("Executing: {}", command_config.title),
+            //    Some(resolved_command.clone()),
+            //)
+            //.await;
 
             {
                 let mut is_terminated = state.is_terminated.lock().await;
@@ -156,7 +149,8 @@ impl BuildManager {
                     println!("Build is terminated");
                     //send logs in here then again start the next project
                     *is_terminated = false;
-                    return;
+                    success = false;
+                    break;
                 }
             }
 
@@ -164,39 +158,11 @@ impl BuildManager {
 
             match result {
                 Ok(output) => {
-                    if command_config.send_to_sock {
-                        for line in output.lines() {
-                            Self::send_log(
-                                &state,
-                                &build_request.socket_token,
-                                &project_state,
-                                &build_id,
-                                step,
-                                LogLevel::Info,
-                                line.to_string(),
-                                None,
-                            )
-                            .await;
-                        }
-                    }
+                    println!("One command is done in here");
                 }
                 Err(error) => {
-                    Self::send_log(
-                        &state,
-                        &build_request.socket_token,
-                        &project_state,
-                        &build_id,
-                        step,
-                        LogLevel::Error,
-                        format!("Command failed: {}", error),
-                        Some(resolved_command),
-                    )
-                    .await;
-
-                    if command_config.on_error == "abort" {
-                        success = false;
-                        break;
-                    }
+                    success = false;
+                    break;
                 }
             }
 
@@ -206,44 +172,16 @@ impl BuildManager {
         // Execute success/failure commands
         let post_commands = if success {
             &project_config.build.run_on_success
+            //handle error or failure in here for the build
         } else {
             &project_config.build.run_on_failure
         };
-
-        for command_config in post_commands {
-            let resolved_command =
-                utils::resolve_command(&command_config.command, &build_request.payload);
-            let _ = Self::execute_command(&state, &resolved_command).await;
-        }
-
-        let app_clone = state.clone();
-
-        // Update build status
-        let final_status = if success {
-            BuildStatus::Success
-        } else {
-            BuildStatus::Failed
-        };
-        Self::finalize_build(
-            state,
-            &project_state,
-            &build_id,
-            final_status,
-            &project_config,
-            &build_request,
-        )
-        .await;
-
-        // let project_name_clone = build_request.project_name.clone();
-
-        // tokio::spawn(async move {
-        //     BuildManager::process_queue(app_clone.clone(), project_name_clone).await;
-        // });
     }
 
     async fn execute_command(
         state: &actix_web::web::Data<AppState>,
         command: &str,
+        step: usize,
     ) -> Result<String, String> {
         let mut child = Command::new("bash")
             .arg("-c")
@@ -261,8 +199,12 @@ impl BuildManager {
             }
         }
 
-        let stdout = child.stdout.take().unwrap();
-        let stderr = child.stderr.take().unwrap();
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+        tokio::join!(
+            read_output_lines(stdout, step, "success", state), //read_output_lines(stdout, step, "running", &state),
+            read_output_lines(stderr, step, "error", state) //read_output_lines(stdout, step, "running", &state),
+        );
 
         {
             //need to check here
@@ -271,38 +213,6 @@ impl BuildManager {
                 Option<tokio::process::Child>,
             > = state.running_command_child.lock().await;
             *running_command_child = Some(child);
-        }
-
-        let mut stdout_reader = BufReader::new(stdout);
-        let mut stderr_reader = BufReader::new(stderr);
-
-        let mut output = String::new();
-        let mut stdout_line = String::new();
-        let mut stderr_line = String::new();
-
-        loop {
-            tokio::select! {
-                result = stdout_reader.read_line(&mut stdout_line) => {
-                    match result {
-                        Ok(0) => break, // EOF
-                        Ok(_) => {
-                            output.push_str(&stdout_line);
-                            stdout_line.clear();
-                        }
-                        Err(e) => return Err(format!("Error reading stdout: {}", e)),
-                    }
-                }
-                result = stderr_reader.read_line(&mut stderr_line) => {
-                    match result {
-                        Ok(0) => break, // EOF
-                        Ok(_) => {
-                            output.push_str(&stderr_line);
-                            stderr_line.clear();
-                        }
-                        Err(e) => return Err(format!("Error reading stderr: {}", e)),
-                    }
-                }
-            }
         }
 
         let child_arc = state.running_command_child.clone();
@@ -317,7 +227,7 @@ impl BuildManager {
                 .await
                 .map_err(|e| format!("Failed to wait for command: {}", e))?;
             if status.success() {
-                Ok(output)
+                Ok("".to_string())
             } else {
                 Err(format!("Command exited with status: {}", status))
             }
@@ -326,9 +236,8 @@ impl BuildManager {
         }
     }
 
-    async fn send_log(
+    pub async fn send_log(
         state: &Arc<AppState>,
-        socket_token: &str,
         project_state: &crate::models::ProjectState,
         build_id: &str,
         step: usize,
